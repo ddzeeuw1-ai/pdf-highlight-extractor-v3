@@ -36,74 +36,123 @@ def _color_label(h: Highlight) -> str:
     return f"{emoji} {h.color.capitalize()}" if h.color else ""
 
 
+# ── Helpers ───────────────────────────────────────────────────
+
+def _group_by_source(
+    entries: list[tuple[str, Highlight]]
+) -> tuple[list[str], dict[str, list[Highlight]]]:
+    """Return (ordered source list, source→highlights dict)."""
+    from collections import defaultdict
+    grouped: dict[str, list[Highlight]] = defaultdict(list)
+    order: list[str] = []
+    for source, h in entries:
+        if source not in grouped:
+            order.append(source)
+        grouped[source].append(h)
+    return order, grouped
+
+
+def _color_meta_txt(h: Highlight) -> str:
+    """Left-margin marker line: '▍ yellow · 2024-01-15'"""
+    parts = []
+    if h.color:
+        parts.append(h.color)
+    if h.timestamp:
+        parts.append(h.timestamp)
+    if parts:
+        return "▍ " + " · ".join(parts)
+    return ""
+
+
 # ── Formatters ────────────────────────────────────────────────
 
-def _entry_txt(i: int, h: Highlight, source: str = "") -> str:
-    header_parts = [f"[{i}] Page {h.page}"]
-    if source:
-        header_parts.append(f"— {source}")
-    if h.color:
-        header_parts.append(f"[{h.color}]")
-    if h.timestamp:
-        header_parts.append(f"@ {h.timestamp}")
-    lines = [" ".join(header_parts)]
-    if h.kind == "note":
-        lines.append(f"Note: {h.note}")
-    else:
-        lines.append(h.text)
-        if h.note:
-            lines.append(f"↳ Note: {h.note}")
-    return "\n".join(lines)
-
-
 def to_txt(entries: list[tuple[str, Highlight]]) -> str:
-    lines = ["Highlights & Notes", "=" * 40, "",
-             f"Total entries: {len(entries)}", "", "=" * 40, ""]
-    for i, (source, h) in enumerate(entries, 1):
-        lines.append(_entry_txt(i, h, source))
+    order, grouped = _group_by_source(entries)
+    lines = [
+        "Highlights & Notes",
+        "=" * 40,
+        "",
+        f"Total entries: {len(entries)}",
+        "",
+        "=" * 40,
+        "",
+    ]
+    for source in order:
+        doc_highlights = grouped[source]
+        title = source if source else "Document"
+        lines.append(f"[ {title} ]")
+        lines.append("─" * (len(title) + 4))
+        lines.append("")
+        for h in doc_highlights:
+            if h.kind == "note":
+                lines.append(f"📝 {h.note} (p. {h.page})")
+            else:
+                lines.append(f"{h.text} (p. {h.page})")
+                if h.note:
+                    lines.append(f"  ↳ {h.note}")
+            meta = _color_meta_txt(h)
+            if meta:
+                lines.append(meta)
+            lines.append("")
         lines.append("")
     return "\n".join(lines)
 
 
 def to_markdown(entries: list[tuple[str, Highlight]]) -> str:
-    lines = ["# Highlights & Notes", "",
-             f"**Total entries:** {len(entries)}", "", "---", ""]
-    for i, (source, h) in enumerate(entries, 1):
-        label = _color_label(h)
-        meta_parts = [f"Page {h.page}"]
-        if source:
-            meta_parts.append(source)
-        if label:
-            meta_parts.append(label)
-        if h.timestamp:
-            meta_parts.append(h.timestamp)
-        lines.append(f"## [{i}] {' · '.join(meta_parts)}")
+    order, grouped = _group_by_source(entries)
+    lines = [
+        "# Highlights & Notes",
+        "",
+        f"**Total entries:** {len(entries)}",
+        "",
+    ]
+    for source in order:
+        doc_highlights = grouped[source]
+        title = source if source else "Document"
+        lines.append(f"## {title}")
         lines.append("")
-        if h.kind == "note":
-            lines.append(f"*Note:* {h.note}")
-        else:
-            lines.append(h.text)
-            if h.note:
-                lines.append("")
-                lines.append(f"> **Note:** {h.note}")
+        for h in doc_highlights:
+            emoji = COLOR_EMOJI.get(h.color, "")
+            if h.kind == "note":
+                lines.append(f"> 📝 **Note:** {h.note} *(p. {h.page})*")
+            else:
+                lines.append(f"> {h.text} *(p. {h.page})*")
+                if h.note:
+                    lines.append(f">")
+                    lines.append(f"> *↳ {h.note}*")
+            # Colour + timestamp as a subtle meta line
+            meta_parts = []
+            if h.color:
+                meta_parts.append(f"{emoji} {h.color}")
+            if h.timestamp:
+                meta_parts.append(h.timestamp)
+            if meta_parts:
+                lines.append(f"*{' · '.join(meta_parts)}*")
+            lines.append("")
+        lines.append("---")
         lines.append("")
     return "\n".join(lines)
 
 
 def to_json(entries: list[tuple[str, Highlight]]) -> str:
+    order, grouped = _group_by_source(entries)
     data = []
-    for source, h in entries:
-        entry = {
-            "page": h.page,
-            "kind": h.kind,
-            "text": h.text,
-            "color": h.color,
-            "timestamp": h.timestamp,
-            "note": h.note,
-        }
+    for source in order:
+        doc_entry: dict = {}
         if source:
-            entry["source"] = source
-        data.append(entry)
+            doc_entry["document"] = source
+        doc_entry["highlights"] = [
+            {
+                "page": h.page,
+                "kind": h.kind,
+                "text": h.text,
+                "color": h.color,
+                "timestamp": h.timestamp,
+                "note": h.note,
+            }
+            for h in grouped[source]
+        ]
+        data.append(doc_entry)
     return json.dumps(data, indent=2, ensure_ascii=False)
 
 
@@ -164,30 +213,35 @@ def process_pdfs(
     else:
         all_entries.sort(key=lambda x: (x[0], x[1].page))
 
-    # Preview (first 5 entries)
+    # Preview (first 5 entries, grouped by source)
     preview_lines = [
         f"Found {len(all_entries)} entry/entries across {len(pdf_files)} file(s).\n"
     ]
     if errors:
         preview_lines.append("⚠ Errors: " + "; ".join(errors) + "\n")
 
-    for i, (source, h) in enumerate(all_entries[:5], 1):
-        label = _color_label(h)
-        header = f"[{i}] Page {h.page}"
-        if source:
-            header += f" — {source}"
-        if label:
-            header += f"  {label}"
-        if h.timestamp:
-            header += f"  {h.timestamp}"
-        preview_lines.append(header)
+    prev_source = object()  # sentinel
+    shown = 0
+    for source, h in all_entries:
+        if shown >= 5:
+            break
+        # Print document header once per source
+        if source != prev_source:
+            title = source if source else "Document"
+            preview_lines.append(f"[ {title} ]")
+            preview_lines.append("─" * (len(title) + 4))
+            prev_source = source
         if h.kind == "note":
-            preview_lines.append(f"  📝 {h.note}")
+            preview_lines.append(f"📝 {h.note} (p. {h.page})")
         else:
-            preview_lines.append(f"  {h.text}")
+            preview_lines.append(f"{h.text} (p. {h.page})")
             if h.note:
                 preview_lines.append(f"  ↳ {h.note}")
+        meta = _color_meta_txt(h)
+        if meta:
+            preview_lines.append(meta)
         preview_lines.append("")
+        shown += 1
 
     if len(all_entries) > 5:
         preview_lines.append(
