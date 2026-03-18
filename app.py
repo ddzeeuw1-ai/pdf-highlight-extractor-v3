@@ -124,10 +124,13 @@ def process_pdfs(
         pdf_files = [pdf_files]
 
     # Validate page range
+    # Gradio 5 sends 0 for empty number fields, treat 0/None as "no filter"
+    start_page = int(start_page) if start_page and int(start_page) > 0 else None
+    end_page = int(end_page) if end_page and int(end_page) > 0 else None
     page_range = None
     if start_page or end_page:
-        s = int(start_page) if start_page else 1
-        e = int(end_page) if end_page else 99999
+        s = start_page if start_page else 1
+        e = end_page if end_page else 99999
         if s > e:
             return f"Start page ({s}) cannot be greater than end page ({e}).", None
         page_range = (s, e)
@@ -239,13 +242,11 @@ with gr.Blocks(title="PDF Highlight Extractor") as demo:
                 start_page = gr.Number(
                     label="Start page (optional)",
                     precision=0,
-                    minimum=1,
                     value=None,
                 )
                 end_page = gr.Number(
                     label="End page (optional)",
                     precision=0,
-                    minimum=1,
                     value=None,
                 )
             sort_by = gr.Radio(
